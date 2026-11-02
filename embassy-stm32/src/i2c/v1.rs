@@ -96,6 +96,22 @@ impl<'d, M: PeriMode, IM: MasterMode> I2c<'d, M, IM> {
         trace!("i2c v1 init complete");
     }
 
+    /// Wait for a STOP requested by the previous transaction to leave the bus.
+    ///
+    /// `write_bytes` and `blocking_read_timeout` (and their async twins) set
+    /// CR1.STOP and return at once; hardware clears the bit once the Stop
+    /// condition has been generated. If the next transaction sets START while
+    /// STOP is still set, the START is lost: SB never comes and the transaction
+    /// times out, with the peripheral idle again by the time the error is seen.
+    /// Seen on an STM32F429 at 200 and 400 kHz with a device whose command
+    /// stream is back-to-back short writes (an SSD1306); fixed by this wait.
+    fn wait_for_stop_clear(info: &'static Info, timeout: Timeout) -> Result<(), Error> {
+        while info.regs.cr1().read().stop() {
+            timeout.check()?;
+        }
+        Ok(())
+    }
+
     fn check_and_clear_error_flags(info: &'static Info) -> Result<i2c::regs::Sr1, Error> {
         // Note that flags should only be cleared once they have been registered. If flags are
         // cleared otherwise, there may be an inherent race condition and flags may be missed.
@@ -172,7 +188,8 @@ impl<'d, M: PeriMode, IM: MasterMode> I2c<'d, M, IM> {
         let mut data_offset = 0usize;
 
         if frame.send_start() {
-            // Send a START condition
+            // Send a START condition, once the previous transaction's STOP is done
+            Self::wait_for_stop_clear(self.info, timeout)?;
 
             self.info.regs.cr1().modify(|reg| {
                 reg.set_start(true);
@@ -302,7 +319,9 @@ impl<'d, M: PeriMode, IM: MasterMode> I2c<'d, M, IM> {
         };
 
         if frame.send_start() {
-            // Send a START condition and set ACK bit
+            // Send a START condition and set ACK bit, once the previous
+            // transaction's STOP is done
+            Self::wait_for_stop_clear(self.info, timeout)?;
             self.info.regs.cr1().modify(|reg| {
                 reg.set_start(true);
                 reg.set_ack(true);
@@ -521,7 +540,8 @@ impl<'d, IM: MasterMode> I2c<'d, Async, IM> {
         });
 
         if frame.send_start() {
-            // Send a START condition
+            // Send a START condition, once the previous transaction's STOP is done
+            Self::wait_for_stop_clear(self.info, timeout)?;
             self.info.regs.cr1().modify(|reg| {
                 reg.set_start(true);
             });
@@ -752,7 +772,9 @@ impl<'d, IM: MasterMode> I2c<'d, Async, IM> {
         });
 
         if frame.send_start() {
-            // Send a START condition and set ACK bit
+            // Send a START condition and set ACK bit, once the previous
+            // transaction's STOP is done
+            Self::wait_for_stop_clear(self.info, timeout)?;
             self.info.regs.cr1().modify(|reg| {
                 reg.set_start(true);
                 reg.set_ack(true);
