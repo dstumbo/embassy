@@ -33,8 +33,11 @@ mod rx_consts {
     /// IP header error
     pub const RXDESC_4_IPHE: u32 = 1 << 3;
     #[cfg(feature = "ptp")]
-    /// Timestamp available
-    pub const RXDESC_4_TSA: u32 = 1 << 14;
+    /// Time stamp valid. With the enhanced descriptor format (EDFE = 1) RDES0
+    /// bit 7 is TSV: a snapshot of the receive time stamp was written to RDES6
+    /// and RDES7. Valid only when the last-descriptor bit (RDES0[8]) is set.
+    /// (RM0090 Rev 19, RDES0 bit 7 IPHCE/TSV; RDES4 bits 31:14 are reserved.)
+    pub const RXDESC_0_TSV: u32 = 1 << 7;
 }
 
 use rx_consts::*;
@@ -170,7 +173,8 @@ impl RDes {
     pub(crate) fn timestamp(&self) -> Option<Timestamp> {
         #[cfg(any(eth_v1b, eth_v1c))]
         {
-            if self.rdes4.get() & RXDESC_4_TSA == 0 {
+            let rdes0 = self.rdes0.get();
+            if rdes0 & (RXDESC_0_LS | RXDESC_0_TSV) != (RXDESC_0_LS | RXDESC_0_TSV) {
                 return None;
             }
             let rdes6 = self.rdes6.get();
